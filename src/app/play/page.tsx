@@ -2489,7 +2489,81 @@ function PlayPageClient() {
   // ---------------------------------------------------------------------------
   // 弹幕处理函数
   // ---------------------------------------------------------------------------
-8  
+
+  /**
+   * 智能过滤弹幕源：优先匹配年份和标题完全相同的源
+   * @param animes 所有搜索到的弹幕源
+   * @param videoTitle 视频标题
+   * @param videoYear 视频年份（如 "2024"）
+   * @returns 过滤后的弹幕源列表
+   */
+  const filterDanmakuSources = (
+    animes: DanmakuAnime[],
+    videoTitle: string,
+    videoYear?: string
+  ): DanmakuAnime[] => {
+    if (animes.length <= 1) return animes;
+
+    // 标准化标题：移除空格、全角转半角
+    const normalizeTitle = (title: string): string => {
+      return title
+        .replace(/\s+/g, '')
+        .replace(/[\uff01-\uff5e]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+        .toLowerCase();
+    };
+
+    // 从日期字符串中提取年份（如 "2024-01" -> "2024"）
+    const extractYear = (dateStr?: string): string | null => {
+      if (!dateStr) return null;
+      const match = dateStr.match(/^(\d{4})/);
+      return match ? match[1] : null;
+    };
+
+    const normalizedVideoTitle = normalizeTitle(videoTitle);
+
+    // 第一步：尝试同时匹配年份和标题
+    if (videoYear) {
+      const exactMatches = animes.filter((anime) => {
+        const animeYear = extractYear(anime.startDate);
+        const normalizedAnimeTitle = normalizeTitle(anime.animeTitle);
+        return animeYear === videoYear && normalizedAnimeTitle === normalizedVideoTitle;
+      });
+
+      if (exactMatches.length > 0) {
+        console.log(`[弹幕匹配] 找到 ${exactMatches.length} 个年份和标题完全匹配的源`);
+        return exactMatches;
+      }
+    }
+
+    // 第二步：如果没有完全匹配，尝试只匹配标题
+    const titleMatches = animes.filter((anime) => {
+      const normalizedAnimeTitle = normalizeTitle(anime.animeTitle);
+      return normalizedAnimeTitle === normalizedVideoTitle;
+    });
+
+    if (titleMatches.length > 0) {
+      console.log(`[弹幕匹配] 找到 ${titleMatches.length} 个标题完全匹配的源`);
+      return titleMatches;
+    }
+
+    // 第三步：如果只匹配年份
+    if (videoYear) {
+      const yearMatches = animes.filter((anime) => {
+        const animeYear = extractYear(anime.startDate);
+        return animeYear === videoYear;
+      });
+
+      if (yearMatches.length > 0) {
+        console.log(`[弹幕匹配] 找到 ${yearMatches.length} 个年份匹配的源`);
+        return yearMatches;
+      }
+    }
+
+    // 如果都没有匹配，返回所有源
+    console.log('[弹幕匹配] 未找到精确匹配，返回所有源');
+    return animes;
+  };
+
   // 匹配弹幕集数：优先根据集数标题中的数字匹配，降级到索引匹配
   const matchDanmakuEpisode = (
     currentEpisodeIndex: number,
@@ -2730,17 +2804,25 @@ function PlayPageClient() {
       const searchResult = await searchAnime(title);
 
       if (searchResult.success && searchResult.animes.length > 0) {
+        // 应用智能过滤：优先匹配年份和标题
+        const videoYear = detailRef.current?.year;
+        const filteredAnimes = filterDanmakuSources(
+          searchResult.animes,
+          title,
+          videoYear
+        );
+
         // 如果有多个匹配结果，让用户选择
-        if (searchResult.animes.length > 1) {
-          console.log(`[弹幕] 找到 ${searchResult.animes.length} 个弹幕源`);
-          setDanmakuMatches(searchResult.animes);
+        if (filteredAnimes.length > 1) {
+          console.log(`[弹幕] 找到 ${filteredAnimes.length} 个弹幕源`);
+          setDanmakuMatches(filteredAnimes);
           setShowDanmakuSourceSelector(true);
           setDanmakuLoading(false);
           return;
         }
 
         // 只有一个结果，直接使用
-        const anime = searchResult.animes[0];
+        const anime = filteredAnimes[0];
         await handleDanmakuSourceSelect(anime);
       } else {
         console.warn('[弹幕] 未找到匹配的弹幕');
@@ -2861,21 +2943,29 @@ function PlayPageClient() {
       const searchResult = await searchAnime(searchKeyword);
 
       if (searchResult.success && searchResult.animes.length > 0) {
+        // 应用智能过滤：优先匹配年份和标题
+        const videoYear = detailRef.current?.year;
+        const filteredAnimes = filterDanmakuSources(
+          searchResult.animes,
+          title,
+          videoYear
+        );
+
         // 如果有多个匹配结果，让用户选择
-        if (searchResult.animes.length > 1) {
-          console.log(`找到 ${searchResult.animes.length} 个弹幕源，等待用户选择`);
-          setDanmakuMatches(searchResult.animes);
+        if (filteredAnimes.length > 1) {
+          console.log(`找到 ${filteredAnimes.length} 个弹幕源，等待用户选择`);
+          setDanmakuMatches(filteredAnimes);
           setCurrentSearchKeyword(searchKeyword); // 保存当前搜索关键词
           setShowDanmakuSourceSelector(true);
           setDanmakuLoading(false);
           if (artPlayerRef.current) {
-            artPlayerRef.current.notice.show = `找到 ${searchResult.animes.length} 个弹幕源，请选择`;
+            artPlayerRef.current.notice.show = `找到 ${filteredAnimes.length} 个弹幕源，请选择`;
           }
           return;
         }
 
         // 只有一个结果，直接使用
-        const anime = searchResult.animes[0];
+        const anime = filteredAnimes[0];
 
         // 获取剧集列表
         const episodesResult = await getEpisodes(anime.animeId);
